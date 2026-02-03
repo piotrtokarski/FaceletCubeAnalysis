@@ -1,3 +1,13 @@
+import os
+
+import numpy as np
+import pycuber
+from sklearn.metrics import accuracy_score, f1_score
+
+from algorithms.CubeMovementRanker import CubeMovementRanker
+from utils.DataLoader import DataLoader
+from utils.DataTransformer import DataTransformer
+from utils.EvaluationSchema import KFoldSplit
 
 
 def evaluate_with_schema(df, target_column, schema, seed=None, average="macro"):
@@ -43,4 +53,8 @@ if __name__ == "__main__":
     df = DataLoader.load_data(path)
     schema = KFoldSplit(k=5, shuffle=True)
 
-    evaluate_with_schema(df, target_column="target", schema=schema)
+    df_transformer = DataTransformer.prepare(df)
+
+
+
+    # evaluate_with_schema(df, target_column="target", schema=schema)
