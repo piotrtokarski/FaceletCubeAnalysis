@@ -1,3 +1,5 @@
+import numpy as np
+
 
 class EvaluationSchema:
     def getName(self):

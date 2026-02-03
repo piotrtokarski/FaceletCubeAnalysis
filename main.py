@@ -9,25 +9,72 @@ from utils.DataLoader import DataLoader
 from utils.DataTransformer import DataTransformer
 from utils.EvaluationSchema import KFoldSplit
 
+import pandas as pd
 
-def evaluate_with_schema(df, target_column, schema, seed=None, average="macro"):
+# stride = 1 -> sliding window - okna sa tworzone z przesunieciem o jeden
+def solves_to_windows(df_solves, window_size = 10, stride = 1):
+    rows = []
+
+    for r in df_solves.itertuples(index=False):
+        solve_id = r.id
+        states = list(r.state_list)
+        moves  = list(r.moves_list)
+        red_state = list(r.redundant_states)
+        red_state_bin = list(r.redundant_states_binary)
+
+        n = len(moves)
+        if len(states) != n + 1 or len(red_state_bin) != n + 1 or len(red_state) != n + 1:
+            print(f"id={solve_id}: something is wrong with states number or with moves number!")
+            continue
+
+        start_index = 0
+        while start_index < n - window_size + 1:
+            end_index = start_index + window_size - 1
+
+            states_ctx = states[start_index: start_index + window_size + 1]  # W+1 stanów
+            moves_ctx = moves[start_index: start_index + window_size]  # W ruchów
+
+            rows.append({
+                "solve_id": solve_id,
+                "start": start_index,
+                "end": end_index,
+                "states_ctx": states_ctx,
+                "moves_ctx": moves_ctx,
+                "redundant_state_marker": int(red_state[end_index + 1]),
+                "redundant_state_marker_binary": int(red_state_bin[end_index + 1])
+            })
+
+            start_index += stride
+
+    return pd.DataFrame(rows)
+
+def evaluate_with_schema(df_solves, target_column, schema, window_size=10, stride=1, seed=None, average="macro"):
+    label_cols = ["redundant_state_marker", "redundant_state_marker_binary"]
+    meta_cols = ["solve_id", "start", "end"]
     rng = np.random.default_rng(seed)
-    X = df
-    y = df[target_column]
 
-    folds = schema.split(X, y=None, rng=rng)
-
+    folds = schema.split(df_solves, y=None, rng=rng)
     fold_metrics = []
     for i, (train_idx, test_idx) in enumerate(folds, start=1):
-        train_df = df.iloc[train_idx]
-        y_train = train_df[target_column]
-        test_df = df.iloc[test_idx]
-        y_test = test_df[target_column]
+        train_solves = df_solves.iloc[train_idx].reset_index(drop=True)
+        test_solves  = df_solves.iloc[test_idx].reset_index(drop=True)
 
-        X_train = train_df
-        X_test = test_df
+        train_windows = solves_to_windows(train_solves, window_size=window_size, stride=stride)
+        test_windows  = solves_to_windows(test_solves,  window_size=window_size, stride=stride)
 
-        ranker = CubeMovementRanker()
+        if len(train_windows) == 0 or len(test_windows) == 0:
+            print(f"Fold {i}: skipped (no windows) train={len(train_windows)} test={len(test_windows)}")
+            continue
+
+        y_train = train_windows[target_column].to_numpy(dtype=np.int32)
+        X_train = train_windows.drop(columns=[c for c in label_cols if c in train_windows.columns])
+        X_train = X_train.drop(columns=[c for c in meta_cols if c in X_train.columns])
+
+        y_test = test_windows[target_column].to_numpy(dtype=np.int32)
+        X_test = test_windows.drop(columns=[c for c in label_cols if c in test_windows.columns])
+        X_test = X_test.drop(columns=[c for c in meta_cols if c in X_test.columns])
+
+        ranker = CubeMovementRanker(target_column=target_column)
         ranker.train(X_train, y_train)
         y_pred = ranker.predict(X_test)
 
@@ -48,13 +95,23 @@ def evaluate_with_schema(df, target_column, schema, seed=None, average="macro"):
     return fold_metrics
 
 if __name__ == "__main__":
-    path = os.path.join("datasets", "solves.csv")
+    calculate_redundant_states = False
+    redundant_states_path = "solves_marked.pkl"
 
-    df = DataLoader.load_data(path)
+    if calculate_redundant_states:
+        path = os.path.join("datasets", "solves.csv")
+        df = DataLoader.load_data(path)
+        df_transformer = DataTransformer.prepare(df,verbose=True)
+        DataLoader.save_prepared_df(df_prepared=df_transformer, path=redundant_states_path)
+    else:
+        df_transformer = DataLoader.load_prepared_df(path=redundant_states_path)
+
     schema = KFoldSplit(k=5, shuffle=True)
-
-    df_transformer = DataTransformer.prepare(df)
-
-
-
-    # evaluate_with_schema(df, target_column="target", schema=schema)
+    evaluate_with_schema(
+        df_transformer,
+        target_column="redundant_state_marker_binary",
+        schema=schema,
+        window_size=2,
+        average="binary",
+        seed=42
+    )

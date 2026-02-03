@@ -1,7 +1,7 @@
 
 
 class CubeMovementRanker:
-    def __init__(self):
+    def __init__(self,target_column):
         pass
 
     def train(self, X_train, y_train):

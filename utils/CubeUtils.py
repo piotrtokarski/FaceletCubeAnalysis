@@ -45,10 +45,10 @@ class CubeUtils:
             facelet = CubeUtils.cube_to_facelet_from_cube(cube)
             state_list.append(facelet)
 
-        return state_list
+        return state_list, moves
 
     @staticmethod
-    def get_redundant_moves_markers(state_list):
+    def get_redundant_states_markers(state_list):
         if len(state_list) < 2:
             return [0]
 
