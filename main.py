@@ -5,9 +5,10 @@ import pycuber
 from sklearn.metrics import accuracy_score, f1_score
 
 from algorithms.CubeMovementRanker import CubeMovementRanker
+from algorithms.SimpleMLPNet import SimpleMLPNet
 from utils.DataLoader import DataLoader
 from utils.DataTransformer import DataTransformer
-from utils.EvaluationSchema import KFoldSplit
+from utils.EvaluationSchema import KFoldSplit, RandomTrainTestSplit
 
 import pandas as pd
 
@@ -74,7 +75,19 @@ def evaluate_with_schema(df_solves, target_column, schema, window_size=10, strid
         X_test = test_windows.drop(columns=[c for c in label_cols if c in test_windows.columns])
         X_test = X_test.drop(columns=[c for c in meta_cols if c in X_test.columns])
 
-        ranker = CubeMovementRanker(target_column=target_column)
+        model = SimpleMLPNet(move_vocab_size=18)
+
+        ranker = CubeMovementRanker(
+            model=model,
+            task="binary",
+            move_mode="18",
+            epochs=300,
+            batch_size=256,
+            lr=1e-3,
+            threshold=0.5,
+            verbose=True,
+            f1_average=average
+        )
         ranker.train(X_train, y_train)
         y_pred = ranker.predict(X_test)
 
@@ -106,12 +119,13 @@ if __name__ == "__main__":
     else:
         df_transformer = DataLoader.load_prepared_df(path=redundant_states_path)
 
-    schema = KFoldSplit(k=5, shuffle=True)
+    schema = KFoldSplit(k=10, shuffle=True)
+    schema = RandomTrainTestSplit(test_size=0.1, shuffle=True)
     evaluate_with_schema(
         df_transformer,
         target_column="redundant_state_marker_binary",
         schema=schema,
-        window_size=2,
+        window_size=10,
         average="binary",
         seed=42
     )
