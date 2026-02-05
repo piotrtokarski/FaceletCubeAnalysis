@@ -2,33 +2,43 @@ import torch
 import torch.nn as nn
 
 class SimpleMLPNet(nn.Module):
-    """
-    Zachowuje kolejność:
-      - stany: (B, T, 54) -> embed -> (B, T, d_state)  [mean po 54 stickerach]
-      - ruchy: (B, W)     -> embed -> (B, W, d_move)
-    Potem flatten w kolejności i MLP.
-    """
-    def __init__(self, move_vocab_size=18, d_state=32, d_move=32, hidden=(256, 128), dropout=0.2):
+    def __init__(self, move_vocab_size=18, d_state=16, d_move=32, hidden=(256, 128), dropout=0.3):
         super().__init__()
         self.state_emb = nn.Embedding(6, d_state)
-        self.move_emb  = nn.Embedding(move_vocab_size, d_move)
+        self.move_emb = nn.Embedding(move_vocab_size, d_move)
 
-        # LazyLinear nie wymaga znajomości (T,W) w __init__
-        layers = [
+        # pozycje stickerów (żeby model wiedział który sticker jest który)
+        self.sticker_pos = nn.Parameter(torch.randn(1, 1, 54, d_state) * 0.02)
+
+        # kompresja 54*d_state -> d_state_tok (na każdy krok T)
+        d_state_tok = 64
+        self.state_proj = nn.Sequential(
+            nn.Linear(54 * d_state, 256),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(256, d_state_tok),
+            nn.ReLU(),
+        )
+
+        self.mlp = nn.Sequential(
             nn.LazyLinear(hidden[0]),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden[0], hidden[1]),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden[1], 1)  # logit
-        ]
-        self.mlp = nn.Sequential(*layers)
+            nn.Linear(hidden[1], 1)
+        )
 
     def forward(self, states, moves):
         # states: (B,T,54)
-        s = self.state_emb(states).mean(dim=2)   # (B,T,d_state)  <-- kolejność T zachowana
-        m = self.move_emb(moves)                # (B,W,d_move)    <-- kolejność W zachowana
+        B, T, _ = states.shape
 
-        x = torch.cat([s.reshape(s.size(0), -1), m.reshape(m.size(0), -1)], dim=1)
-        return self.mlp(x)  # (B,1) logit
+        s = self.state_emb(states) + self.sticker_pos     # (B,T,54,d_state)
+        s = s.reshape(B, T, -1)                           # (B,T,54*d_state)
+        s = self.state_proj(s)                            # (B,T,d_state_tok)
+
+        m = self.move_emb(moves)                          # (B,W,d_move)
+
+        x = torch.cat([s.reshape(B, -1), m.reshape(B, -1)], dim=1)
+        return self.mlp(x)
