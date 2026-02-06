@@ -76,19 +76,19 @@ class CubeMovementRanker:
         dl_val = DataLoader(ds_val, batch_size=self.batch_size, shuffle=False, drop_last=False)
 
         self.model.to(self.device)
-        # loss_fn = self._make_loss()
-        if self.task == "binary":
-            n_pos = int((y_tr >= 0.5).sum())
-            n_neg = int((y_tr < 0.5).sum())
-            pos_weight = n_neg / max(n_pos, 1)
-
-            if self.verbose:
-                print(f"[train] n_pos={n_pos}, n_neg={n_neg}, pos_weight={pos_weight:.4f}")
-
-            pos_weight_t = torch.tensor([pos_weight], dtype=torch.float32, device=self.device)
-            loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
-        else:
-            loss_fn = self._make_loss()
+        loss_fn = self._make_loss()
+        # if self.task == "binary":
+        #     n_pos = int((y_tr >= 0.5).sum())
+        #     n_neg = int((y_tr < 0.5).sum())
+        #     pos_weight = n_neg / max(n_pos, 1)
+        #
+        #     if self.verbose:
+        #         print(f"[train] n_pos={n_pos}, n_neg={n_neg}, pos_weight={pos_weight:.4f}")
+        #
+        #     pos_weight_t = torch.tensor([pos_weight], dtype=torch.float32, device=self.device)
+        #     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
+        # else:
+        #     loss_fn = self._make_loss()
 
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
 
