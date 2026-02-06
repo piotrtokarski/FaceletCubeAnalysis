@@ -16,38 +16,19 @@ from utils.Experiment import ExperimentConfig, Experiment
 
 if __name__ == "__main__":
     experiments = [
-        # ExperimentConfig(
-        #     calculate_redundant_states=False,
-        #     redundant_states_path="solves_marked.pkl",
-        #     target_column="redundant_state_marker_binary",
-        #     window_size=10,
-        #     stride=1,
-        #     seed=42,
-        #     # schema=RandomTrainTestSplit(test_size=0.1, shuffle=True),
-        #     schema=KFoldSplit(k=10, shuffle=True),
-        #     model=SimpleMLPNet(move_vocab_size=18),
-        #     ranker_params={
-        #         "task": "binary",
-        #         "move_mode": "18",
-        #         "epochs": 300,
-        #         "batch_size": 256,
-        #         "lr": 1e-3,
-        #         "verbose": True,
-        #         "val_size": 0.10
-        #     },
-        # ),
         ExperimentConfig(
             calculate_redundant_states=False,
             redundant_states_path="solves_marked.pkl",
-            target_column="redundant_state_marker",
+            target_column="redundant_state_marker_binary",
             window_size=10,
             stride=1,
-            seed=42,
+            seed=None,
             # schema=RandomTrainTestSplit(test_size=0.1, shuffle=True),
             schema=KFoldSplit(k=10, shuffle=True),
             model=SimpleMLPNet(move_vocab_size=18),
             ranker_params={
-                "task": "regression",
+                "task": "binary",
+                "stop_metric": "loss",
                 "move_mode": "18",
                 "epochs": 300,
                 "batch_size": 256,
@@ -55,7 +36,27 @@ if __name__ == "__main__":
                 "verbose": True,
                 "val_size": 0.10
             },
-        )
+        ),
+        # ExperimentConfig(
+        #     calculate_redundant_states=False,
+        #     redundant_states_path="solves_marked.pkl",
+        #     target_column="redundant_state_marker",
+        #     window_size=10,
+        #     stride=1,
+        #     seed=None,
+        #     # schema=RandomTrainTestSplit(test_size=0.1, shuffle=True),
+        #     schema=KFoldSplit(k=10, shuffle=True),
+        #     model=SimpleMLPNet(move_vocab_size=18),
+        #     ranker_params={
+        #         "task": "regression",
+        #         "move_mode": "18",
+        #         "epochs": 300,
+        #         "batch_size": 256,
+        #         "lr": 1e-3,
+        #         "verbose": True,
+        #         "val_size": 0.10
+        #     },
+        # )
     ]
 
     for idx, cfg in enumerate(experiments, start=1):

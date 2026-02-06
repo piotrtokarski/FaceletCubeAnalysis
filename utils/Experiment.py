@@ -4,14 +4,12 @@ from typing import Optional, Any, Dict, List
 
 import numpy as np
 import pandas as pd
-import pycuber
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score
 
 from algorithms.CubeMovementRanker import CubeMovementRanker
-from algorithms.SimpleMLPNet import SimpleMLPNet
+from utils.BestThreshold import BestThreshold
 from utils.DataLoader import DataLoader
 from utils.DataTransformer import DataTransformer
-from utils.EvaluationSchema import KFoldSplit, RandomTrainTestSplit
 
 
 @dataclass
@@ -35,6 +33,7 @@ class ExperimentConfig:
     # ranker params (wszystko konfigurowalne z main)
     ranker_params: Dict[str, Any] = field(default_factory=lambda: {
         "task": "binary",
+        "stop_metric": "loss",
         "move_mode": "18",
         "epochs": 300,
         "batch_size": 256,
@@ -132,7 +131,7 @@ class Experiment:
             y_score_test = ranker.score_samples(X_test)
 
             if task == "binary":
-                best_threshold, best_f1 = Experiment._best_threshold_f1(y_true=y_train, y_score=y_score_train)
+                best_threshold, best_f1 = BestThreshold._best_threshold_f1(y_true=y_train, y_score=y_score_train)
 
                 y_pred = (y_score_test >= best_threshold).astype(np.int32)
 
@@ -184,25 +183,6 @@ class Experiment:
             print(f"R2  : mean={np.mean(r2s):.4f}, std={np.std(r2s, ddof=0):.4f}")
 
         return fold_metrics
-
-    @staticmethod
-    def _best_threshold_f1(y_true, y_score, average="binary",max_candidates = 1024):
-        max_score = np.max(y_score)
-        min_score = np.min(y_score)
-
-        thresholds = np.linspace(min_score, max_score, max_candidates)
-
-        best_threshold = thresholds[0]
-        best_f1 = -1.0
-
-        for t in thresholds:
-            y_pred = (y_score >= t).astype(np.int32)
-            f1 = f1_score(y_true, y_pred, average=average, zero_division=0)
-            if f1 > best_f1:
-                best_f1 = float(f1)
-                best_threshold = float(t)
-
-        return best_threshold, best_f1
 
     @staticmethod
     def run(cfg: ExperimentConfig) -> List[Dict[str, float]]:

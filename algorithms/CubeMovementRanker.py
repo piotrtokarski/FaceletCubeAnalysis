@@ -1,10 +1,9 @@
 import numpy as np
 import torch
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.neural_network import MLPClassifier
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from utils.BestThreshold import BestThreshold
 from utils.CubeEncoder import CubeEncoder
 
 
@@ -39,7 +38,8 @@ class CubeMovementRanker:
             patience: int = 10,
             min_delta: float = 1e-4,
             restore_best_weights: bool = True,
-            random_state: int | None = 42
+            random_state: int | None = 42,
+            stop_metric: str = "loss",  # "f1" | "loss"
     ):
         self.model = model
         self.task = task
@@ -58,6 +58,7 @@ class CubeMovementRanker:
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
         self.random_state = random_state
+        self.stop_metric = stop_metric
 
         self.move2id = None
         self._trained = False
@@ -66,6 +67,18 @@ class CubeMovementRanker:
         self._prepare_encoder(X_train_df)
 
         X_tr_df, y_tr, X_val_df, y_val = self._split_train_val(X_train_df, y_train)
+
+        if X_val_df is None or y_val is None:
+            raise ValueError("Dla early stopping/model selection ustaw val_size w (0,1).")
+
+        # wybór metryki monitorowanej
+        monitor_metric = self.stop_metric
+
+        if monitor_metric not in {"f1", "loss"}:
+            raise ValueError("stop_metric musi być: 'f1' albo 'loss'.")
+
+        if self.task == "regression" and monitor_metric == "f1":
+            raise ValueError("Dla regression stop_metric='f1' nie ma sensu; użyj 'loss'.")
 
         X_tr_states, X_tr_moves = self._encode(X_tr_df)
         ds_tr = _CubeDataset(X_tr_states, X_tr_moves, y_tr)
@@ -92,7 +105,15 @@ class CubeMovementRanker:
 
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
 
-        best_val_loss = np.inf
+        if monitor_metric == "f1":
+            best_monitor = -np.inf
+            monitor_name = "val_f1"
+        else:
+            best_monitor = np.inf
+            monitor_name = "val_loss"
+
+        best_threshold = float(self.threshold)
+
         best_state = None
         bad_epochs = 0
 
@@ -123,6 +144,10 @@ class CubeMovementRanker:
             self.model.eval()
             val_loss_sum = 0.0
             val_n = 0
+
+            model_scores = []
+            y_true_val = []
+
             with torch.no_grad():
                 for states, moves, y in dl_val:
                     states = states.to(self.device)
@@ -132,37 +157,74 @@ class CubeMovementRanker:
                     out = self.model(states, moves).view(-1, 1)
                     loss = loss_fn(out, y)
 
+                    model_scores.append(out.squeeze(1).detach().cpu().numpy())  # (B,)
+                    y_true_val.append(y.squeeze(1).detach().cpu().numpy())  # (B,)
+
                     bs = y.size(0)
                     val_loss_sum += loss.item() * bs
                     val_n += bs
 
             val_loss = val_loss_sum / max(val_n, 1)
 
-            if self.verbose:
-                print(f"Epoch {epoch:03d}/{self.epochs} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f}")
+            epoch_thr, epoch_f1 = None, None
+            if self.task == "binary":
+                raw = np.concatenate(model_scores, axis=0).astype(np.float32)
+                y_val_np = np.concatenate(y_true_val, axis=0).astype(np.int32)
+                epoch_thr, epoch_f1 = BestThreshold._best_threshold_f1(y_true=y_val_np, y_score=raw)
 
-            # EARLY STOPPING na val_loss
-            if self.early_stopping:
-                improved = val_loss < (best_val_loss - self.min_delta)
-                if improved:
-                    best_val_loss = val_loss
-                    bad_epochs = 0
-                    if self.restore_best_weights:
-                        best_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
-                else:
-                    bad_epochs += 1
-
-                if bad_epochs >= self.patience:
-                    if self.verbose:
-                        print(f"Early stopping at epoch {epoch}, best val_loss={best_val_loss:.6f}")
-                    break
+            if monitor_metric == "f1":
+                monitor = float(epoch_f1)
+                improved = monitor > (best_monitor + self.min_delta)
             else:
-                if self.verbose:
-                    print(f"Epoch {epoch:03d}/{self.epochs} | train_loss={train_loss:.6f}")
+                monitor = float(val_loss)
+                improved = monitor < (best_monitor - self.min_delta)
 
-        # restore best
-        if self.early_stopping and self.restore_best_weights and best_state is not None:
+            if self.verbose:
+                if self.task == "binary":
+                    print(
+                        f"Epoch {epoch:03d}/{self.epochs} | "
+                        f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | "
+                        f"val_f1={epoch_f1:.6f} | val_thr={epoch_thr:.6f}"
+                    )
+                else:
+                    print(
+                        f"Epoch {epoch:03d}/{self.epochs} | "
+                        f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f}"
+                    )
+
+            # model selection
+            if improved:
+                best_monitor = monitor
+                bad_epochs = 0
+
+                if self.task == "binary":
+                    best_threshold = float(epoch_thr)
+
+                if self.restore_best_weights:
+                    best_state = {
+                        k: v.detach().cpu().clone()
+                        for k, v in self.model.state_dict().items()
+                    }
+            else:
+                bad_epochs += 1
+
+            # early stopping
+            if self.early_stopping and bad_epochs >= self.patience:
+                if self.verbose:
+                    print(f"Early stopping at epoch {epoch}, best {monitor_name}={best_monitor:.6f}")
+                break
+
+        # restore best checkpoint
+        if self.restore_best_weights and best_state is not None:
             self.model.load_state_dict(best_state)
+
+        # zapisz najlepszy próg z najlepszego checkpointu
+        if self.task == "binary":
+            if self.restore_best_weights:
+                self.threshold = best_threshold
+            else:
+                # model jest z ostatniej epoki -> użyj progu z ostatniej epoki
+                self.threshold = float(epoch_thr) if epoch_thr is not None else float(self.threshold)
 
         self._trained = True
         return self
@@ -190,12 +252,7 @@ class CubeMovementRanker:
 
         raw = np.concatenate(outs, axis=0)
 
-        if self.task == "binary":
-            # zwracamy prawdopodobieństwo klasy 1
-            return 1.0 / (1.0 + np.exp(-raw))
-        else:
-            # regresja: surowa wartość
-            return raw.astype(np.float32)
+        return raw.astype(np.float32)
 
     def predict(self, X_test_df):
         scores = self.predict_scores(X_test_df)
@@ -229,30 +286,6 @@ class CubeMovementRanker:
         if self.task == "regression":
             return nn.MSELoss()
         raise ValueError("task must be 'binary' or 'regression'")
-
-    @torch.no_grad()
-    def _eval_binary_on_train(self, X_states, X_moves, y_true_np):
-        """Szybka ewaluacja na train: acc + f1."""
-        self.model.eval()
-
-        ds = _CubeDataset(X_states, X_moves, y_true_np)
-        dl = DataLoader(ds, batch_size=self.batch_size, shuffle=False, drop_last=False)
-
-        probs = []
-        for states, moves, _ in dl:
-            states = states.to(self.device)
-            moves = moves.to(self.device)
-            logits = self.model(states, moves).squeeze(1)  # (B,)
-            p = torch.sigmoid(logits)
-            probs.append(p.cpu().numpy())
-
-        probs = np.concatenate(probs, axis=0)
-        y_pred = (probs >= self.threshold).astype(np.int32)
-        y_true = y_true_np.astype(np.int32)
-
-        acc = accuracy_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred, average=self.f1_average)
-        return acc, f1
 
     def _split_train_val(self, X_df, y_np):
         n = len(X_df)
