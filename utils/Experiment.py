@@ -1,10 +1,16 @@
+import copy
 import os
 from dataclasses import dataclass, field
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Callable
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score
+
+from sklearn.metrics import (
+    accuracy_score, f1_score, precision_score, recall_score,
+    balanced_accuracy_score, average_precision_score, roc_auc_score,
+    matthews_corrcoef, mean_absolute_error, mean_squared_error, r2_score
+)
 
 from algorithms.CubeMovementRanker import CubeMovementRanker
 from utils.BestThreshold import BestThreshold
@@ -25,15 +31,16 @@ class ExperimentConfig:
     stride: int = 1
     seed: Optional[int] = 42
 
-
     # required objects
     schema: Any = None
-    model: Any = None
+    model: Any = None                      # fallback (gdy nie podasz model_factory)
+    model_factory: Optional[Callable[[], Any]] = None  # preferowane
 
-    # ranker params (wszystko konfigurowalne z main)
+    # ranker params
     ranker_params: Dict[str, Any] = field(default_factory=lambda: {
         "task": "binary",
         "stop_metric": "loss",
+        "threshold_technique": "max_f1",
         "move_mode": "18",
         "epochs": 300,
         "batch_size": 256,
@@ -42,6 +49,11 @@ class ExperimentConfig:
         "val_size": 0.15
     })
 
+    # które metryki policzyć i podsumować na TEST (binary)
+    binary_eval_metrics: tuple[str, ...] = (
+        "accuracy", "f1", "precision", "recall",
+        "balanced_accuracy", "mcc", "pr_auc", "roc_auc"
+    )
 
 class Experiment:
 
@@ -92,16 +104,19 @@ class Experiment:
         stride: int = 1,
         seed: Optional[int] = None,
         ranker_params: Optional[Dict[str, Any]] = None,
+        model_factory: Optional[Callable[[], Any]] = None,
+        binary_eval_metrics: tuple[str, ...] = ("accuracy", "f1"),
     ) -> List[Dict[str, float]]:
         label_cols = ["redundant_state_marker", "redundant_state_marker_binary"]
         meta_cols = ["solve_id", "start", "end"]
+
+        ranker_params = ranker_params or {}
         task = str(ranker_params.get("task", "binary")).lower()
 
         rng = np.random.default_rng(seed)
         folds = schema.split(df_solves, y=None, rng=rng)
 
         fold_metrics = []
-        ranker_params = ranker_params or {}
 
         for i, (train_idx, test_idx) in enumerate(folds, start=1):
             train_solves = df_solves.iloc[train_idx].reset_index(drop=True)
@@ -122,30 +137,37 @@ class Experiment:
             X_test = test_windows.drop(columns=[c for c in label_cols if c in test_windows.columns])
             X_test = X_test.drop(columns=[c for c in meta_cols if c in X_test.columns])
 
+            # świeży model na fold
+            if model_factory is not None:
+                fold_model = model_factory()
+            else:
+                # fallback (głębsza kopia)
+                fold_model = copy.deepcopy(model)
+
             ranker = CubeMovementRanker(
-                model=model,
+                model=fold_model,
                 **ranker_params
             )
-            ranker.train(X_train, y_train)
-            y_score_train = ranker.score_samples(X_train)
+
+            ranker.train(X_train, y_train, X_test_wyciek=X_test, y_test_wyciek=y_test)
+
             y_score_test = ranker.score_samples(X_test)
 
             if task == "binary":
-                best_threshold, best_f1 = BestThreshold._best_threshold_f1(y_true=y_train, y_score=y_score_train)
+                best_threshold = float(ranker.threshold)  # próg po walidacji z rankera
+                m = Experiment._compute_binary_metrics(
+                    y_true=y_test,
+                    y_score=y_score_test,
+                    threshold=best_threshold,
+                    metrics=binary_eval_metrics
+                )
 
-                y_pred = (y_score_test >= best_threshold).astype(np.int32)
+                row = {"fold": i, "task": "binary", "threshold": best_threshold}
+                row.update(m)
+                fold_metrics.append(row)
 
-                acc = accuracy_score(y_test, y_pred)
-                f1 = f1_score(y_test, y_pred, average="binary", zero_division=0)
-
-                fold_metrics.append({
-                    "fold": i,
-                    "task": "binary",
-                    "threshold": best_threshold,
-                    "accuracy": float(acc),
-                    "f1": float(f1),
-                })
-                print(f"Fold {i}: thr={best_threshold:.3f}, acc={acc:.4f}, f1={f1:.4f}")
+                pretty = ", ".join([f"{k}={v:.4f}" if np.isfinite(v) else f"{k}=nan" for k, v in m.items()])
+                print(f"Fold {i}: thr={best_threshold:.4f}, {pretty}")
 
             elif task == "regression":
                 mae = mean_absolute_error(y_test, y_score_test)
@@ -153,27 +175,28 @@ class Experiment:
                 r2 = r2_score(y_test, y_score_test)
 
                 fold_metrics.append({
-                    "fold": i,
-                    "task": "regression",
-                    "mae": float(mae),
-                    "rmse": float(rmse),
-                    "r2": float(r2),
+                    "fold": i, "task": "regression",
+                    "mae": float(mae), "rmse": float(rmse), "r2": float(r2),
                 })
                 print(f"Fold {i}: MAE={mae:.4f}, RMSE={rmse:.4f}, R2={r2:.4f}")
-
             else:
                 raise ValueError(f"Unsupported task='{task}'. Use 'binary' or 'regression'.")
 
+        # ===== summary =====
         print("\n=== Summary ===")
         if not fold_metrics:
             print("Brak metryk (wszystkie foldy pominięte).")
             return fold_metrics
 
         if task == "binary":
-            accs = [m["accuracy"] for m in fold_metrics]
-            f1s = [m["f1"] for m in fold_metrics]
-            print(f"accuracy   : mean={np.mean(accs):.4f}, std={np.std(accs, ddof=0):.4f}")
-            print(f"f1         : mean={np.mean(f1s):.4f}, std={np.std(f1s, ddof=0):.4f}")
+            metric_names = [m for m in binary_eval_metrics if m in fold_metrics[0]]
+            for name in metric_names:
+                vals = np.array([fm[name] for fm in fold_metrics], dtype=np.float64)
+                vals = vals[np.isfinite(vals)]
+                if vals.size == 0:
+                    print(f"{name:<16}: mean=nan, std=nan")
+                else:
+                    print(f"{name:<16}: mean={vals.mean():.4f}, std={vals.std(ddof=0):.4f}")
         else:
             maes = [m["mae"] for m in fold_metrics]
             rmses = [m["rmse"] for m in fold_metrics]
@@ -183,6 +206,38 @@ class Experiment:
             print(f"R2  : mean={np.mean(r2s):.4f}, std={np.std(r2s, ddof=0):.4f}")
 
         return fold_metrics
+
+    @staticmethod
+    def _compute_binary_metrics(y_true, y_score, threshold, metrics):
+        y_true = np.asarray(y_true).astype(np.int32).reshape(-1)
+        y_score = np.asarray(y_score).astype(np.float32).reshape(-1)
+        y_pred = (y_score >= float(threshold)).astype(np.int32)
+
+        uniq = np.unique(y_true)
+        has_both_classes = (uniq.size == 2)
+
+        out = {}
+        for m in metrics:
+            m = m.lower().strip()
+            if m == "accuracy":
+                out[m] = float(accuracy_score(y_true, y_pred))
+            elif m == "f1":
+                out[m] = float(f1_score(y_true, y_pred, average="binary", zero_division=0))
+            elif m == "precision":
+                out[m] = float(precision_score(y_true, y_pred, zero_division=0))
+            elif m == "recall":
+                out[m] = float(recall_score(y_true, y_pred, zero_division=0))
+            elif m == "balanced_accuracy":
+                out[m] = float(balanced_accuracy_score(y_true, y_pred))
+            elif m == "mcc":
+                out[m] = float(matthews_corrcoef(y_true, y_pred))
+            elif m == "pr_auc":
+                out[m] = float(average_precision_score(y_true, y_score)) if has_both_classes else float("nan")
+            elif m == "roc_auc":
+                out[m] = float(roc_auc_score(y_true, y_score)) if has_both_classes else float("nan")
+            else:
+                raise ValueError(f"Unknown binary metric: {m}")
+        return out
 
     @staticmethod
     def run(cfg: ExperimentConfig) -> List[Dict[str, float]]:
@@ -195,6 +250,7 @@ class Experiment:
 
         return Experiment.evaluate_with_schema(
             model=cfg.model,
+            model_factory=cfg.model_factory,
             df_solves=df_transformer,
             target_column=cfg.target_column,
             schema=cfg.schema,
@@ -202,5 +258,5 @@ class Experiment:
             stride=cfg.stride,
             seed=cfg.seed,
             ranker_params=cfg.ranker_params,
+            binary_eval_metrics=cfg.binary_eval_metrics,
         )
-
