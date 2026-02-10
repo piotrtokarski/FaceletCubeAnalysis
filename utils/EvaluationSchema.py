@@ -12,12 +12,13 @@ class EvaluationSchema:
         raise NotImplementedError
 
 class RandomTrainTestSplit(EvaluationSchema):
-    def __init__(self, test_size=0.2, shuffle=True):
+    def __init__(self, repetition=5, test_size=0.2, shuffle=True):
+        self.repetition = repetition
         self.test_size = test_size
         self.shuffle = shuffle
 
     def getName(self):
-        return f"random_ts_{self.test_size}"
+        return f"random_ts_{self.test_size}_rep_{self.repetition}"
 
     def split(self, X, y=None, rng=None):
         if rng is None:
@@ -30,13 +31,15 @@ class RandomTrainTestSplit(EvaluationSchema):
         ts = float(self.test_size)
         n_test = max(1, int(round(n * ts)))
 
-        perm = idx.copy()
-        if self.shuffle:
-            rng.shuffle(perm)
+        reps = max(1, self.repetition)
+        for _ in range(reps):
+            perm = idx.copy()
+            if self.shuffle:
+                rng.shuffle(perm)
 
-        test_idx = perm[:n_test]
-        train_idx = perm[n_test:]
-        folds.append((train_idx, test_idx))
+            test_idx = perm[:n_test]
+            train_idx = perm[n_test:]
+            folds.append((train_idx, test_idx))
 
         return folds
 

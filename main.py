@@ -40,7 +40,8 @@ if __name__ == "__main__":
             window_size=5,
             stride=1,
             seed=42,
-            schema=RandomTrainTestSplit(test_size=0.1, shuffle=True),
+            schema=RandomTrainTestSplit(repetition=10,test_size=0.1, shuffle=True),
+            # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
             model_factory=lambda: SimpleMLPNet(move_vocab_size=18),
