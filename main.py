@@ -1,4 +1,5 @@
 from algorithms.SimpleMLPNet import SimpleMLPNet
+from algorithms.RecurrentCubeNet import RecurrentCubeNet
 from utils.EvaluationSchema import RandomTrainTestSplit, KFoldSplit
 from utils.Experiment import ExperimentConfig, Experiment
 
@@ -17,10 +18,10 @@ COMMON_RANKER = {
         "roc_auc",  # metryka niezalezna od progu
     ),
     "move_mode": "18",
-    "epochs": 300,
-    "batch_size": 256,
-    "lr": 1e-3,
-    "patience": 10,
+    "epochs": 260,
+    "batch_size": 128,
+    "lr": 3e-4,
+    "patience": 15,
     "weight_decay": 1e-2, # kara sa duze wagi modelu
     "verbose": True,
     "val_size": 0.10,
@@ -44,7 +45,7 @@ if __name__ == "__main__":
             # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
-            model_factory=lambda: SimpleMLPNet(move_vocab_size=18),
+            model_factory=lambda: RecurrentCubeNet(move_vocab_size=18),
 
             ranker_params=COMMON_RANKER,
             binary_eval_metrics=COMMON_METRICS,
