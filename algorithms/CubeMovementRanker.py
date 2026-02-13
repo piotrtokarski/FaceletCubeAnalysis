@@ -41,6 +41,12 @@ class CubeMovementRanker:
             batch_size: int = 256,
             lr: float = 1e-3,
             weight_decay: float = 1e-2,
+            optimizer_name: str = "adamw",
+            scheduler_name: str = "reduce_on_plateau",
+            scheduler_factor: float = 0.5,
+            scheduler_patience: int = 3,
+            min_lr: float = 1e-6,
+            grad_clip_norm: float | None = 1.0,
             device: str | None = None,
             verbose=True,
 
@@ -62,6 +68,12 @@ class CubeMovementRanker:
         self.batch_size = batch_size
         self.lr = lr
         self.weight_decay = weight_decay
+        self.optimizer_name = optimizer_name.lower().strip()
+        self.scheduler_name = scheduler_name.lower().strip()
+        self.scheduler_factor = float(scheduler_factor)
+        self.scheduler_patience = int(scheduler_patience)
+        self.min_lr = float(min_lr)
+        self.grad_clip_norm = grad_clip_norm
         self.verbose = verbose
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -108,9 +120,8 @@ class CubeMovementRanker:
         self.model.to(self.device)
         loss_fn = self._make_loss(y_train=y_tr)
 
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        # opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        # opt = torch.optim.SGD(self.model.parameters(), lr=self.lr)
+        opt = self._make_optimizer()
+        scheduler = self._make_scheduler(opt)
 
         # inicjalizacja best
         if self._metric_direction(self.stop_metric) == "max":
@@ -138,6 +149,8 @@ class CubeMovementRanker:
                 out = self.model(states, moves).view(-1, 1)
                 loss = loss_fn(out, y)
                 loss.backward()
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=float(self.grad_clip_norm))
                 opt.step()
 
                 bs = y.size(0)
@@ -165,6 +178,7 @@ class CubeMovementRanker:
                 monitor = float(val_metrics.get(self.stop_metric, np.nan))
 
             improved = self._is_improved(monitor, best_monitor, self.stop_metric)
+            self._scheduler_step(scheduler, monitor)
 
             # ---------- TEST (diagnostycznie) ----------
             test_loss = None
@@ -183,6 +197,7 @@ class CubeMovementRanker:
                 if self.task == "binary":
                     log_main = (
                             f"Epoch {epoch:03d}/{self.epochs} | "
+                            f"lr={self._fmt(self._current_lr(opt))} | "
                             f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)} | "
                             f"val_thr={self._fmt(epoch_thr)} | "
                             f"monitor({self.stop_metric})={self._fmt(monitor)}"
@@ -201,6 +216,7 @@ class CubeMovementRanker:
                 else:
                     print(
                             f"Epoch {epoch:03d}/{self.epochs} | "
+                            f"lr={self._fmt(self._current_lr(opt))} | "
                             f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)}"
                         )
 
@@ -313,6 +329,49 @@ class CubeMovementRanker:
 
         self._trained = True
         return self
+
+    def _make_optimizer(self):
+        if self.optimizer_name == "adamw":
+            return torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        if self.optimizer_name == "adam":
+            return torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        if self.optimizer_name == "radam":
+            return torch.optim.RAdam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        raise ValueError("optimizer_name must be 'adamw', 'adam' or 'radam'")
+
+    def _make_scheduler(self, optimizer):
+        if self.scheduler_name == "none":
+            return None
+        if self.scheduler_name == "reduce_on_plateau":
+            mode = "max" if self._metric_direction(self.stop_metric) == "max" else "min"
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=mode,
+                factor=self.scheduler_factor,
+                patience=self.scheduler_patience,
+                min_lr=self.min_lr,
+            )
+        if self.scheduler_name == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=max(self.epochs, 1),
+                eta_min=self.min_lr,
+            )
+        raise ValueError("scheduler_name must be 'none', 'reduce_on_plateau' or 'cosine'")
+
+    def _scheduler_step(self, scheduler, monitor):
+        if scheduler is None:
+            return
+        if self.scheduler_name == "reduce_on_plateau":
+            scheduler.step(monitor)
+            return
+        scheduler.step()
+
+    @staticmethod
+    def _current_lr(optimizer):
+        if not optimizer.param_groups:
+            return np.nan
+        return float(optimizer.param_groups[0]["lr"])
 
 
     # -------- prediction --------
@@ -499,4 +558,3 @@ class CubeMovementRanker:
             out["roc_auc"] = roc_auc_score(y_true, y_score)
 
         return out
-
