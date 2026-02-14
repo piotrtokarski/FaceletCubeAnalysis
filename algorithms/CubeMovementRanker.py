@@ -11,7 +11,8 @@ from sklearn.metrics import (
     matthews_corrcoef,
 )
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from utils.BestThreshold import BestThreshold
 from utils.CubeEncoder import CubeEncoder
@@ -28,6 +29,28 @@ class _CubeDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.states[idx], self.moves[idx], self.y[idx]
+
+
+class BinaryFocalWithLogitsLoss(nn.Module):
+    def __init__(self, alpha: float = 0.75, gamma: float = 2.0, reduction: str = "mean"):
+        super().__init__()
+        self.alpha = float(alpha)
+        self.gamma = float(gamma)
+        self.reduction = reduction
+
+    def forward(self, logits, target):
+        target = target.float()
+        bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+        p = torch.sigmoid(logits)
+        pt = target * p + (1.0 - target) * (1.0 - p)
+        alpha_t = target * self.alpha + (1.0 - target) * (1.0 - self.alpha)
+        loss = alpha_t * ((1.0 - pt) ** self.gamma) * bce
+
+        if self.reduction == "sum":
+            return loss.sum()
+        if self.reduction == "none":
+            return loss
+        return loss.mean()
 
 
 class CubeMovementRanker:
@@ -47,6 +70,10 @@ class CubeMovementRanker:
             scheduler_patience: int = 3,
             min_lr: float = 1e-6,
             grad_clip_norm: float | None = 1.0,
+            loss_name: str = "bce",
+            focal_alpha: float = 0.75,
+            focal_gamma: float = 2.0,
+            train_sampling: str = "uniform",
             device: str | None = None,
             verbose=True,
 
@@ -74,6 +101,10 @@ class CubeMovementRanker:
         self.scheduler_patience = int(scheduler_patience)
         self.min_lr = float(min_lr)
         self.grad_clip_norm = grad_clip_norm
+        self.loss_name = loss_name.lower().strip()
+        self.focal_alpha = float(focal_alpha)
+        self.focal_gamma = float(focal_gamma)
+        self.train_sampling = train_sampling.lower().strip()
         self.verbose = verbose
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -104,7 +135,7 @@ class CubeMovementRanker:
         # train / val loaders
         X_tr_states, X_tr_moves = self._encode(X_tr_df)
         ds_tr = _CubeDataset(X_tr_states, X_tr_moves, y_tr)
-        dl_tr = DataLoader(ds_tr, batch_size=self.batch_size, shuffle=True, drop_last=False)
+        dl_tr = self._make_train_loader(ds_tr, y_tr)
 
         X_val_states, X_val_moves = self._encode(X_val_df)
         ds_val = _CubeDataset(X_val_states, X_val_moves, y_val)
@@ -448,16 +479,38 @@ class CubeMovementRanker:
 
     # -------- training --------
 
+    def _make_train_loader(self, ds_tr, y_tr):
+        if self.train_sampling == "uniform":
+            return DataLoader(ds_tr, batch_size=self.batch_size, shuffle=True, drop_last=False)
+
+        if self.train_sampling == "balanced":
+            yb = (np.asarray(y_tr).reshape(-1) >= 0.5).astype(np.int64)
+            class_counts = np.bincount(yb, minlength=2)
+            class_weights = 1.0 / np.maximum(class_counts, 1)
+            sample_weights = class_weights[yb]
+            sampler = WeightedRandomSampler(
+                weights=torch.as_tensor(sample_weights, dtype=torch.double),
+                num_samples=len(sample_weights),
+                replacement=True,
+            )
+            return DataLoader(ds_tr, batch_size=self.batch_size, sampler=sampler, drop_last=False)
+
+        raise ValueError("train_sampling must be 'uniform' or 'balanced'")
+
     def _make_loss(self, y_train=None):
         if self.task == "binary":
-            # opcjonalnie możesz tu odkomentować pos_weight:
+            if self.loss_name == "focal":
+                return BinaryFocalWithLogitsLoss(alpha=self.focal_alpha, gamma=self.focal_gamma)
+
             if y_train is not None:
                 yb = (np.asarray(y_train).reshape(-1) >= 0.5).astype(np.int32)
-                n_pos = int(yb.sum()); n_neg = int((1 - yb).sum())
+                n_pos = int(yb.sum())
+                n_neg = int((1 - yb).sum())
                 pos_weight = n_neg / max(n_pos, 1)
                 pos_weight_t = torch.tensor([pos_weight], dtype=torch.float32, device=self.device)
                 return nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
             return nn.BCEWithLogitsLoss()
+
         return nn.MSELoss()
 
     def _split_train_val(self, X_df, y_np):
