@@ -1,10 +1,11 @@
+from algorithms.SequenceRNNNet_v5 import SequenceRNNNet_v5
 from algorithms.SequenceRNNNet_v4 import SequenceRNNNet_v4
 from utils.EvaluationSchema import RandomTrainTestSplit, KFoldSplit
 from utils.Experiment import ExperimentConfig, Experiment
 
 COMMON_RANKER = {
     "task": "binary",
-    "stop_metric": "pr_auc",
+    "stop_metric": "f1",
     "threshold_technique": "max_f1",  # "max_f1", "youden", "dist01", "fixed"
     "metrics_to_log": (
         "f1",
@@ -17,16 +18,17 @@ COMMON_RANKER = {
         "roc_auc",  # metryka niezalezna od progu
     ),
     "move_mode": "18",
-    "epochs": 240,
-    "batch_size": 128,
-    "lr": 6e-4,
-    "patience": 16,
-    "weight_decay": 5e-3,
+    "epochs": 120,
+    "batch_size": 256,
+    "lr": 1e-3,
+    "patience": 8,
+    "min_delta": 5e-4,
+    "weight_decay": 1e-2,
     "optimizer_name": "adamw",
     "scheduler_name": "reduce_on_plateau",
-    "scheduler_factor": 0.5,
-    "scheduler_patience": 3,
-    "min_lr": 1e-6,
+    "scheduler_factor": 0.6,
+    "scheduler_patience": 2,
+    "min_lr": 2e-5,
     "grad_clip_norm": 1.0,
     "verbose": True,
     "val_size": 0.10,
@@ -50,16 +52,14 @@ if __name__ == "__main__":
             # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
-            model_factory=lambda: SequenceRNNNet_v4(
+            model_factory=lambda: SequenceRNNNet_v5(
                 move_vocab_size=18,
-                d_state=32,
-                d_move=32,
-                d_state_token=128,
-                rnn_hidden=192,
-                rnn_layers=2,
-                dropout=0.25,
+                d_state=24,
+                d_move=24,
+                d_state_token=96,
+                rnn_hidden=160,
+                dropout=0.30,
                 rnn_type="gru",
-                bidirectional=True,
             ),
 
             ranker_params=COMMON_RANKER,
