@@ -1,10 +1,10 @@
-from algorithms.SimpleMLPNet import SimpleMLPNet
+from algorithms.SequenceRNNNet_v5 import SequenceRNNNet_v5
 from utils.EvaluationSchema import RandomTrainTestSplit, KFoldSplit
 from utils.Experiment import ExperimentConfig, Experiment
 
 COMMON_RANKER = {
     "task": "binary",
-    "stop_metric": "loss",
+    "stop_metric": "f1",
     "threshold_technique": "max_f1",  # "max_f1", "youden", "dist01", "fixed"
     "metrics_to_log": (
         "f1",
@@ -17,11 +17,18 @@ COMMON_RANKER = {
         "roc_auc",  # metryka niezalezna od progu
     ),
     "move_mode": "18",
-    "epochs": 300,
+    "epochs": 120,
     "batch_size": 256,
     "lr": 1e-3,
-    "patience": 10,
-    "weight_decay": 1e-2, # kara sa duze wagi modelu
+    "patience": 8,
+    "min_delta": 5e-4,
+    "weight_decay": 1e-2,
+    "optimizer_name": "adamw",
+    "scheduler_name": "reduce_on_plateau",
+    "scheduler_factor": 0.6,
+    "scheduler_patience": 2,
+    "min_lr": 2e-5,
+    "grad_clip_norm": 1.0,
     "verbose": True,
     "val_size": 0.10,
 }
@@ -44,7 +51,15 @@ if __name__ == "__main__":
             # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
-            model_factory=lambda: SimpleMLPNet(move_vocab_size=18),
+            model_factory=lambda: SequenceRNNNet_v5(
+                move_vocab_size=18,
+                d_state=24,
+                d_move=24,
+                d_state_token=96,
+                rnn_hidden=160,
+                dropout=0.30,
+                rnn_type="gru",
+            ),
 
             ranker_params=COMMON_RANKER,
             binary_eval_metrics=COMMON_METRICS,
