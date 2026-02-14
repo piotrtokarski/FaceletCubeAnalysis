@@ -1,3 +1,4 @@
+from algorithms.SequenceRNNNet_v7 import SequenceRNNNet_v7
 from algorithms.SequenceRNNNet_v6 import SequenceRNNNet_v6
 from algorithms.SequenceRNNNet_v5 import SequenceRNNNet_v5
 from algorithms.SequenceRNNNet_v4 import SequenceRNNNet_v4
@@ -18,22 +19,22 @@ COMMON_RANKER = {
         "roc_auc",  # metryka niezalezna od progu
     ),
     "move_mode": "18",
-    "epochs": 90,
-    "batch_size": 192,
-    "lr": 8e-4,
-    "patience": 7,
-    "min_delta": 8e-4,
-    "weight_decay": 7e-3,
+    "epochs": 140,
+    "batch_size": 128,
+    "lr": 5e-4,
+    "patience": 12,
+    "min_delta": 5e-4,
+    "weight_decay": 3e-3,
     "optimizer_name": "adamw",
-    "scheduler_name": "reduce_on_plateau",
+    "scheduler_name": "cosine",
     "scheduler_factor": 0.6,
     "scheduler_patience": 2,
-    "min_lr": 3e-5,
+    "min_lr": 1e-5,
     "grad_clip_norm": 1.0,
-    "loss_name": "focal",
+    "loss_name": "bce",
     "focal_alpha": 0.80,
     "focal_gamma": 1.5,
-    "train_sampling": "balanced",
+    "train_sampling": "uniform",
     "verbose": True,
     "val_size": 0.10,
 }
@@ -56,13 +57,13 @@ if __name__ == "__main__":
             # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
-            model_factory=lambda: SequenceRNNNet_v6(
+            model_factory=lambda: SequenceRNNNet_v7(
                 move_vocab_size=18,
-                d_state=28,
-                d_move=28,
-                d_state_token=112,
+                d_state=32,
+                d_move=32,
+                d_state_token=128,
                 rnn_hidden=192,
-                dropout=0.25,
+                dropout=0.2,
                 rnn_type="gru",
             ),
 
