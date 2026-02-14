@@ -11,7 +11,8 @@ from sklearn.metrics import (
     matthews_corrcoef,
 )
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from utils.BestThreshold import BestThreshold
 from utils.CubeEncoder import CubeEncoder
@@ -30,6 +31,28 @@ class _CubeDataset(Dataset):
         return self.states[idx], self.moves[idx], self.y[idx]
 
 
+class BinaryFocalWithLogitsLoss(nn.Module):
+    def __init__(self, alpha: float = 0.75, gamma: float = 2.0, reduction: str = "mean"):
+        super().__init__()
+        self.alpha = float(alpha)
+        self.gamma = float(gamma)
+        self.reduction = reduction
+
+    def forward(self, logits, target):
+        target = target.float()
+        bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+        p = torch.sigmoid(logits)
+        pt = target * p + (1.0 - target) * (1.0 - p)
+        alpha_t = target * self.alpha + (1.0 - target) * (1.0 - self.alpha)
+        loss = alpha_t * ((1.0 - pt) ** self.gamma) * bce
+
+        if self.reduction == "sum":
+            return loss.sum()
+        if self.reduction == "none":
+            return loss
+        return loss.mean()
+
+
 class CubeMovementRanker:
     def __init__(
             self,
@@ -41,6 +64,16 @@ class CubeMovementRanker:
             batch_size: int = 256,
             lr: float = 1e-3,
             weight_decay: float = 1e-2,
+            optimizer_name: str = "adamw",
+            scheduler_name: str = "reduce_on_plateau",
+            scheduler_factor: float = 0.5,
+            scheduler_patience: int = 3,
+            min_lr: float = 1e-6,
+            grad_clip_norm: float | None = 1.0,
+            loss_name: str = "bce",
+            focal_alpha: float = 0.75,
+            focal_gamma: float = 2.0,
+            train_sampling: str = "uniform",
             device: str | None = None,
             verbose=True,
 
@@ -62,6 +95,16 @@ class CubeMovementRanker:
         self.batch_size = batch_size
         self.lr = lr
         self.weight_decay = weight_decay
+        self.optimizer_name = optimizer_name.lower().strip()
+        self.scheduler_name = scheduler_name.lower().strip()
+        self.scheduler_factor = float(scheduler_factor)
+        self.scheduler_patience = int(scheduler_patience)
+        self.min_lr = float(min_lr)
+        self.grad_clip_norm = grad_clip_norm
+        self.loss_name = loss_name.lower().strip()
+        self.focal_alpha = float(focal_alpha)
+        self.focal_gamma = float(focal_gamma)
+        self.train_sampling = train_sampling.lower().strip()
         self.verbose = verbose
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -92,7 +135,7 @@ class CubeMovementRanker:
         # train / val loaders
         X_tr_states, X_tr_moves = self._encode(X_tr_df)
         ds_tr = _CubeDataset(X_tr_states, X_tr_moves, y_tr)
-        dl_tr = DataLoader(ds_tr, batch_size=self.batch_size, shuffle=True, drop_last=False)
+        dl_tr = self._make_train_loader(ds_tr, y_tr)
 
         X_val_states, X_val_moves = self._encode(X_val_df)
         ds_val = _CubeDataset(X_val_states, X_val_moves, y_val)
@@ -108,9 +151,8 @@ class CubeMovementRanker:
         self.model.to(self.device)
         loss_fn = self._make_loss(y_train=y_tr)
 
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        # opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        # opt = torch.optim.SGD(self.model.parameters(), lr=self.lr)
+        opt = self._make_optimizer()
+        scheduler = self._make_scheduler(opt)
 
         # inicjalizacja best
         if self._metric_direction(self.stop_metric) == "max":
@@ -138,6 +180,8 @@ class CubeMovementRanker:
                 out = self.model(states, moves).view(-1, 1)
                 loss = loss_fn(out, y)
                 loss.backward()
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=float(self.grad_clip_norm))
                 opt.step()
 
                 bs = y.size(0)
@@ -165,6 +209,7 @@ class CubeMovementRanker:
                 monitor = float(val_metrics.get(self.stop_metric, np.nan))
 
             improved = self._is_improved(monitor, best_monitor, self.stop_metric)
+            self._scheduler_step(scheduler, monitor)
 
             # ---------- TEST (diagnostycznie) ----------
             test_loss = None
@@ -183,6 +228,7 @@ class CubeMovementRanker:
                 if self.task == "binary":
                     log_main = (
                             f"Epoch {epoch:03d}/{self.epochs} | "
+                            f"lr={self._fmt(self._current_lr(opt))} | "
                             f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)} | "
                             f"val_thr={self._fmt(epoch_thr)} | "
                             f"monitor({self.stop_metric})={self._fmt(monitor)}"
@@ -201,6 +247,7 @@ class CubeMovementRanker:
                 else:
                     print(
                             f"Epoch {epoch:03d}/{self.epochs} | "
+                            f"lr={self._fmt(self._current_lr(opt))} | "
                             f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)}"
                         )
 
@@ -314,6 +361,49 @@ class CubeMovementRanker:
         self._trained = True
         return self
 
+    def _make_optimizer(self):
+        if self.optimizer_name == "adamw":
+            return torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        if self.optimizer_name == "adam":
+            return torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        if self.optimizer_name == "radam":
+            return torch.optim.RAdam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        raise ValueError("optimizer_name must be 'adamw', 'adam' or 'radam'")
+
+    def _make_scheduler(self, optimizer):
+        if self.scheduler_name == "none":
+            return None
+        if self.scheduler_name == "reduce_on_plateau":
+            mode = "max" if self._metric_direction(self.stop_metric) == "max" else "min"
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=mode,
+                factor=self.scheduler_factor,
+                patience=self.scheduler_patience,
+                min_lr=self.min_lr,
+            )
+        if self.scheduler_name == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=max(self.epochs, 1),
+                eta_min=self.min_lr,
+            )
+        raise ValueError("scheduler_name must be 'none', 'reduce_on_plateau' or 'cosine'")
+
+    def _scheduler_step(self, scheduler, monitor):
+        if scheduler is None:
+            return
+        if self.scheduler_name == "reduce_on_plateau":
+            scheduler.step(monitor)
+            return
+        scheduler.step()
+
+    @staticmethod
+    def _current_lr(optimizer):
+        if not optimizer.param_groups:
+            return np.nan
+        return float(optimizer.param_groups[0]["lr"])
+
 
     # -------- prediction --------
 
@@ -389,16 +479,38 @@ class CubeMovementRanker:
 
     # -------- training --------
 
+    def _make_train_loader(self, ds_tr, y_tr):
+        if self.train_sampling == "uniform":
+            return DataLoader(ds_tr, batch_size=self.batch_size, shuffle=True, drop_last=False)
+
+        if self.train_sampling == "balanced":
+            yb = (np.asarray(y_tr).reshape(-1) >= 0.5).astype(np.int64)
+            class_counts = np.bincount(yb, minlength=2)
+            class_weights = 1.0 / np.maximum(class_counts, 1)
+            sample_weights = class_weights[yb]
+            sampler = WeightedRandomSampler(
+                weights=torch.as_tensor(sample_weights, dtype=torch.double),
+                num_samples=len(sample_weights),
+                replacement=True,
+            )
+            return DataLoader(ds_tr, batch_size=self.batch_size, sampler=sampler, drop_last=False)
+
+        raise ValueError("train_sampling must be 'uniform' or 'balanced'")
+
     def _make_loss(self, y_train=None):
         if self.task == "binary":
-            # opcjonalnie możesz tu odkomentować pos_weight:
+            if self.loss_name == "focal":
+                return BinaryFocalWithLogitsLoss(alpha=self.focal_alpha, gamma=self.focal_gamma)
+
             if y_train is not None:
                 yb = (np.asarray(y_train).reshape(-1) >= 0.5).astype(np.int32)
-                n_pos = int(yb.sum()); n_neg = int((1 - yb).sum())
+                n_pos = int(yb.sum())
+                n_neg = int((1 - yb).sum())
                 pos_weight = n_neg / max(n_pos, 1)
                 pos_weight_t = torch.tensor([pos_weight], dtype=torch.float32, device=self.device)
                 return nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
             return nn.BCEWithLogitsLoss()
+
         return nn.MSELoss()
 
     def _split_train_val(self, X_df, y_np):
@@ -499,4 +611,3 @@ class CubeMovementRanker:
             out["roc_auc"] = roc_auc_score(y_true, y_score)
 
         return out
-
