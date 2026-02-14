@@ -1,4 +1,5 @@
 from algorithms.SequenceRNNNet_v5 import SequenceRNNNet_v5
+from algorithms.SequenceRNNNet_v4 import SequenceRNNNet_v4
 from utils.EvaluationSchema import RandomTrainTestSplit, KFoldSplit
 from utils.Experiment import ExperimentConfig, Experiment
 
