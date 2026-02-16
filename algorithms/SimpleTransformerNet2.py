@@ -6,15 +6,15 @@ class SimpleTransformerNet2(nn.Module):
     def __init__(
         self,
         move_vocab_size=18,
+        d_state=16,
+        d_move=32,
         d_model=128,
-        num_layers=3,
         nhead=4,
+        num_layers=3,
         dim_feedforward=256,
         dropout=0.1,
-        max_window=6,
+        max_window=20,
     ):
-    
-                    
         super().__init__()
 
         # === Embedding stickerów (6 kolorów) ===
