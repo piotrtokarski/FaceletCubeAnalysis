@@ -50,10 +50,11 @@ class CubeUtils:
     @staticmethod
     def get_redundant_states_markers(state_list):
         if len(state_list) < 2:
-            return [0]
+            return [0], [0]
 
         n_moves = len(state_list) - 1
-        redundant = [0] * n_moves
+        full_redundant = [0] * n_moves
+        first_redundant = [0] * n_moves
 
         base_states_indexes = list(range(len(state_list)))
 
@@ -81,8 +82,10 @@ class CubeUtils:
                 break
 
             for k in range(base_states_indexes[start_wrong], base_states_indexes[stop_wrong]):
-                redundant[k] = max(redundant[k], max_length_wrong)
+                full_redundant[k] = max(full_redundant[k], max_length_wrong)
+
+            first_redundant[base_states_indexes[start_wrong]] = max(first_redundant[base_states_indexes[start_wrong]], max_length_wrong)
 
             base_states_indexes = base_states_indexes[:start_wrong] + base_states_indexes[stop_wrong:]
 
-        return [0] + redundant
+        return [0] + full_redundant, [0] + first_redundant

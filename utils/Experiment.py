@@ -67,9 +67,11 @@ class Experiment:
             moves = list(r.moves_list)
             red_state = list(r.redundant_states)
             red_state_bin = list(r.redundant_states_binary)
+            red_state_first = list(r.redundant_states_first)
+            red_state_bin_first = list(r.redundant_states_binary_first)
 
             n = len(moves)
-            if len(states) != n + 1 or len(red_state_bin) != n + 1 or len(red_state) != n + 1:
+            if len(states) != n + 1 or len(red_state_bin) != n + 1 or len(red_state) != n + 1 or len(red_state_bin_first) != n + 1 or len(red_state_first) != n + 1:
                 print(f"id={solve_id}: something is wrong with states number or with moves number!")
                 continue
 
@@ -88,6 +90,8 @@ class Experiment:
                     "moves_ctx": moves_ctx,
                     "redundant_state_marker": int(red_state[end_index + 1]),
                     "redundant_state_marker_binary": int(red_state_bin[end_index + 1]),
+                    "redundant_state_marker_first": int(red_state_first[end_index + 1]),
+                    "redundant_state_marker_binary_first": int(red_state_bin_first[end_index + 1]),
                 })
 
                 start_index += stride
@@ -107,7 +111,7 @@ class Experiment:
         model_factory: Optional[Callable[[], Any]] = None,
         binary_eval_metrics: tuple[str, ...] = ("accuracy", "f1"),
     ) -> List[Dict[str, float]]:
-        label_cols = ["redundant_state_marker", "redundant_state_marker_binary"]
+        label_cols = ["redundant_state_marker", "redundant_state_marker_binary", "redundant_state_marker_first", "redundant_state_marker_binary_first"]
         meta_cols = ["solve_id", "start", "end"]
 
         ranker_params = ranker_params or {}

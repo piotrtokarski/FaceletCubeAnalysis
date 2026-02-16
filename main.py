@@ -37,10 +37,11 @@ if __name__ == "__main__":
             calculate_redundant_states=False,
             redundant_states_path="solves_marked.pkl",
             target_column="redundant_state_marker_binary",
-            window_size=5,
+            # target_column="redundant_state_marker_binary_first",
+            window_size=10,
             stride=1,
             seed=42,
-            schema=RandomTrainTestSplit(repetition=10,test_size=0.1, shuffle=True),
+            schema=RandomTrainTestSplit(repetition=3,test_size=0.1, shuffle=True),
             # schema=KFoldSplit(k=10, shuffle=True),
 
             # KLUCZ: świeży model na fold
