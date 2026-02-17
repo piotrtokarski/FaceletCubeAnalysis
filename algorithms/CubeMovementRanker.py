@@ -12,7 +12,7 @@ from sklearn.metrics import (
 )
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
-
+import matplotlib.pyplot as plt
 from utils.BestThreshold import BestThreshold
 from utils.CubeEncoder import CubeEncoder
 
@@ -77,10 +77,10 @@ class CubeMovementRanker:
         self.threshold_technique = threshold_technique.lower().strip()
         self.metrics_to_log = tuple(m.lower().strip() for m in metrics_to_log)
 
-
         self.move2id = None
         self._trained = False
 
+        self.train_properties = {}
 
     def train(self, X_train_df, y_train, X_test_wyciek=None, y_test_wyciek=None):
         self._prepare_encoder(X_train_df)
@@ -121,7 +121,6 @@ class CubeMovementRanker:
         best_state = None
         best_threshold = float(self.threshold)
         bad_epochs = 0
-
 
         for epoch in range(1, self.epochs + 1):
             # ---------- TRAIN ----------
@@ -182,11 +181,11 @@ class CubeMovementRanker:
             if self.verbose:
                 if self.task == "binary":
                     log_main = (
-                            f"Epoch {epoch:03d}/{self.epochs} | "
-                            f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)} | "
-                            f"val_thr={self._fmt(epoch_thr)} | "
-                            f"monitor({self.stop_metric})={self._fmt(monitor)}"
-                        )
+                        f"Epoch {epoch:03d}/{self.epochs} | "
+                        f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)} | "
+                        f"val_thr={self._fmt(epoch_thr)} | "
+                        f"monitor({self.stop_metric})={self._fmt(monitor)}"
+                    )
 
                     val_parts = [f"val_{m}={self._fmt(val_metrics.get(m))}" for m in self.metrics_to_log]
                     log_val = " | " + " | ".join(val_parts) if val_parts else ""
@@ -200,9 +199,9 @@ class CubeMovementRanker:
                     print(log_main + log_val + log_test)
                 else:
                     print(
-                            f"Epoch {epoch:03d}/{self.epochs} | "
-                            f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)}"
-                        )
+                        f"Epoch {epoch:03d}/{self.epochs} | "
+                        f"train_loss={self._fmt(train_loss)} | val_loss={self._fmt(val_loss)}"
+                    )
 
             # model selection
             if improved:
@@ -216,7 +215,6 @@ class CubeMovementRanker:
                     best_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
             else:
                 bad_epochs += 1
-
 
             # early stopping
             if self.early_stopping and bad_epochs >= self.patience:
@@ -257,6 +255,11 @@ class CubeMovementRanker:
             # VAL
             val_loss_f, y_val_true_f, y_val_score_f = self._eval_loader(dl_val, loss_fn, collect_scores=True)
             val_metrics_f = self._compute_binary_metrics(y_val_true_f, y_val_score_f, self.threshold)
+
+            # prepare uncertainty modeling properties
+            self.train_properties["threshold"] = self.threshold
+            self.train_properties["max_score"] = np.max(y_val_score_f)
+            self.train_properties["min_score"] = np.min(y_val_score_f)
 
             # TEST (opcjonalnie)
             test_loss_f, test_metrics_f = None, None
@@ -314,7 +317,6 @@ class CubeMovementRanker:
         self._trained = True
         return self
 
-
     # -------- prediction --------
 
     @torch.no_grad()
@@ -344,6 +346,36 @@ class CubeMovementRanker:
         if self.task == "binary":
             return (scores >= self.threshold).astype(np.int32)
         return scores
+
+    def predict_with_uncertainty(self, X_test_df):
+        scores = self.predict_scores(X_test_df)
+        uncertainty = self._compute_certainty_uncertainty(scores)
+        if self.task == "binary":
+            return (scores >= self.threshold).astype(np.int32), uncertainty
+        return scores, uncertainty
+
+    def _compute_certainty_uncertainty(self, scores):
+        thr = float(self.train_properties["threshold"])
+        max_score = float(self.train_properties["max_score"])
+        min_score = float(self.train_properties["min_score"])
+
+        # bezpieczeństwo zakresu
+        if max_score < min_score:
+            min_score, max_score = max_score, min_score
+        thr = float(np.clip(thr, min_score, max_score))
+
+        scores = np.asarray(scores, dtype=np.float64)
+        scores_clipped = np.clip(scores, min_score, max_score)
+
+        eps = 1e-12
+        den_bad = max(max_score - thr, eps)
+        den_good = max(thr - min_score, eps)
+
+        certainty_bad = np.clip((scores_clipped - thr) / den_bad, 0.0, 1.0)
+        certainty_good = np.clip((thr - scores_clipped) / den_good, 0.0, 1.0)
+        uncertainty = np.clip(1.0 - certainty_bad - certainty_good, 0.0, 1.0)
+
+        return certainty_bad, certainty_good, uncertainty
 
     def score_samples(self, X_test_df):
         return self.predict_scores(X_test_df)
@@ -394,7 +426,8 @@ class CubeMovementRanker:
             # opcjonalnie możesz tu odkomentować pos_weight:
             if y_train is not None:
                 yb = (np.asarray(y_train).reshape(-1) >= 0.5).astype(np.int32)
-                n_pos = int(yb.sum()); n_neg = int((1 - yb).sum())
+                n_pos = int(yb.sum());
+                n_neg = int((1 - yb).sum())
                 pos_weight = n_neg / max(n_pos, 1)
                 pos_weight_t = torch.tensor([pos_weight], dtype=torch.float32, device=self.device)
                 return nn.BCEWithLogitsLoss(pos_weight=pos_weight_t)
@@ -456,7 +489,6 @@ class CubeMovementRanker:
 
         return avg_loss, y_true, y_score
 
-
     def _pick_threshold(self, y_true, y_score):
         if self.threshold_technique == "fixed":
             return float(self.threshold)
@@ -466,8 +498,8 @@ class CubeMovementRanker:
             return float(self.threshold)
 
         thr, _ = BestThreshold._best_threshold(
-                y_true=y_true, y_score=y_score, technique=self.threshold_technique
-            )
+            y_true=y_true, y_score=y_score, technique=self.threshold_technique
+        )
         return float(thr)
 
     def _format_metrics_all(self, metrics: dict) -> str:
@@ -500,3 +532,289 @@ class CubeMovementRanker:
 
         return out
 
+    def plot_three_sets(self, output_file_name, scores=None, n_points=1000, show_samples=True):
+        """
+        Rysuje 3 zbiory/funkcje:
+          - certainty_bad
+          - certainty_good
+          - uncertainty
+        """
+        thr = float(self.train_properties["threshold"])
+        max_score = float(self.train_properties["max_score"])
+        min_score = float(self.train_properties["min_score"])
+
+        if max_score < min_score:
+            min_score, max_score = max_score, min_score
+        thr = float(np.clip(thr, min_score, max_score))
+
+        x = np.linspace(min_score, max_score, n_points)
+        c_bad_x, c_good_x, u_x = self._compute_certainty_uncertainty(x)
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(x, c_bad_x, label="certainty bad")
+        ax.plot(x, c_good_x, label="certainty good")
+        ax.plot(x, u_x, label="uncertainty")
+
+        ax.axvline(thr, linestyle="--", label=f"threshold = {thr:.4f}")
+
+        if scores is not None and show_samples:
+            scores = np.asarray(scores, dtype=np.float64)
+            c_bad_s, c_good_s, u_s = self._compute_certainty_uncertainty(scores)
+
+            ax.scatter(scores, c_bad_s, s=14, alpha=0.5, label="samples: certainty_bad")
+            ax.scatter(scores, c_good_s, s=14, alpha=0.5, label="samples: certainty_good")
+            ax.scatter(scores, u_s, s=14, alpha=0.5, label="samples: uncertainty")
+
+        ax.set_xlabel("score")
+        ax.set_ylabel("membership value")
+        ax.set_ylim(-0.02, 1.02)
+        ax.grid(True, alpha=0.25)
+
+        # LEGENDA: prawa strona, środek, nieprzezroczysta
+        ax.legend(
+            loc="center right",  # prawa strona, środek
+            bbox_to_anchor=(0.98, 0.50),  # WEWNĄTRZ osi
+            bbox_transform=ax.transAxes,
+            frameon=True,
+            framealpha=1.0,  # nieprzezroczysta
+            facecolor="white",
+            edgecolor="black",
+            fancybox=False
+        )
+
+        fig.tight_layout()
+        fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    def plot_three_density_stacked(
+            self,
+            output_file_name,
+            scores=None,
+            bins=40,
+            kde=True,
+            n_points_if_no_scores=1000
+    ):
+        """
+        Rysuje 3 wykresy rozkładu gęstości (jeden pod drugim):
+          1) certainty_bad
+          2) certainty_good
+          3) uncertainty
+        """
+        thr = float(self.train_properties["threshold"])
+        max_score = float(self.train_properties["max_score"])
+        min_score = float(self.train_properties["min_score"])
+
+        if max_score < min_score:
+            min_score, max_score = max_score, min_score
+        thr = float(np.clip(thr, min_score, max_score))
+
+        if scores is None:
+            base_scores = np.linspace(min_score, max_score, n_points_if_no_scores)
+        else:
+            base_scores = np.asarray(scores, dtype=np.float64)
+
+        c_bad, c_good, unc = self._compute_certainty_uncertainty(base_scores)
+
+        data = [
+            ("certainty bad", c_bad),
+            ("certainty good", c_good),
+            ("uncertainty", unc),
+        ]
+
+        fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+
+        for ax, (title, values) in zip(axes, data):
+            values = np.asarray(values, dtype=np.float64)
+            values = values[np.isfinite(values)]
+
+            # Histogram gęstości
+            ax.hist(values, bins=bins, density=True, alpha=0.6, label="hist")
+
+            # KDE (opcjonalnie)
+            kde_drawn = False
+            if kde and values.size > 1 and np.std(values) > 1e-12:
+                try:
+                    from scipy.stats import gaussian_kde
+                    xs = np.linspace(0.0, 1.0, 400)
+                    kde_fun = gaussian_kde(values)
+                    ax.plot(xs, kde_fun(xs), label="kde")
+                    kde_drawn = True
+                except Exception:
+                    pass
+
+            ax.set_title(title)
+            ax.set_ylabel("density")
+            ax.grid(True, alpha=0.25)
+
+            # LEGENDA: prawa strona, u góry, nieprzezroczysta
+            # (zadziała i dla samego hist, i dla hist+kde)
+            ax.legend(
+                loc="upper right",  # prawa strona, góra
+                bbox_to_anchor=(0.98, 0.98),  # WEWNĄTRZ osi
+                bbox_transform=ax.transAxes,
+                frameon=True,
+                framealpha=1.0,  # nieprzezroczysta
+                facecolor="white",
+                edgecolor="black",
+                fancybox=False
+            )
+
+        axes[-1].set_xlabel("membership value")
+        axes[-1].set_xlim(-0.02, 1.02)
+
+        # miejsce na legendy po prawej
+        fig.tight_layout()
+        fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+
+    def plot_component_densities_over_score(
+        self,
+        output_file_name,
+        scores,
+        bins=60,
+        kde=True,
+        stacked=False
+    ):
+        """
+        Gęstości 3 składników po osi score (ważone membershipami):
+          - certainty_bad
+          - certainty_good
+          - uncertainty
+
+        Parametry:
+          output_file_name: plik wyjściowy
+          scores: tablica score'ów próbek (np. z predict_scores)
+          bins: liczba koszy histogramu
+          kde: czy rysować KDE (jeśli scipy dostępne)
+          stacked: False -> wszystkie 3 na jednym wykresie,
+                   True  -> 3 subplots (jeden pod drugim)
+        """
+        thr = float(self.train_properties["threshold"])
+        max_score = float(self.train_properties["max_score"])
+        min_score = float(self.train_properties["min_score"])
+
+        if max_score < min_score:
+            min_score, max_score = max_score, min_score
+        thr = float(np.clip(thr, min_score, max_score))
+
+        s = np.asarray(scores, dtype=np.float64).reshape(-1)
+        s = s[np.isfinite(s)]
+        if s.size == 0:
+            raise ValueError("scores jest puste po odfiltrowaniu NaN/Inf.")
+
+        # spinamy do zakresu modelowania niepewności
+        s = np.clip(s, min_score, max_score)
+
+        c_bad, c_good, unc = self._compute_certainty_uncertainty(s)
+        components = [
+            ("certainty bad", c_bad),
+            ("certainty good", c_good),
+            ("uncertainty", unc),
+        ]
+
+        def _plot_one(ax, title, x_scores, weights):
+            w = np.asarray(weights, dtype=np.float64)
+            mask = np.isfinite(x_scores) & np.isfinite(w)
+            x = x_scores[mask]
+            w = np.clip(w[mask], 0.0, None)
+
+            if x.size == 0 or np.sum(w) <= 1e-12:
+                ax.text(0.5, 0.5, "brak danych", ha="center", va="center", transform=ax.transAxes)
+                ax.set_xlim(min_score, max_score)
+                ax.grid(True, alpha=0.25)
+                return
+
+            # Histogram ważony (gęstość po score)
+            ax.hist(
+                x,
+                bins=bins,
+                range=(min_score, max_score),
+                weights=w,
+                density=True,
+                alpha=0.35,
+                label="hist" if stacked else None
+            )
+
+            # KDE ważone (opcjonalnie)
+            kde_drawn = False
+            if kde and x.size > 1 and np.std(x) > 1e-12:
+                try:
+                    from scipy.stats import gaussian_kde
+                    xs = np.linspace(min_score, max_score, 400)
+                    kde_fun = gaussian_kde(x, weights=w)
+                    ax.plot(xs, kde_fun(xs), label="kde" if stacked else title)
+                    kde_drawn = True
+                except Exception:
+                    pass
+
+            # Jeśli KDE nie wyszło, to nazwę składnika dajemy na histogramie
+            if (not kde_drawn) and (not stacked):
+                # ponownie rysujemy sam kontur/hist z etykietą, żeby był w legendzie
+                ax.hist(
+                    x,
+                    bins=bins,
+                    range=(min_score, max_score),
+                    weights=w,
+                    density=True,
+                    histtype="step",
+                    label=title
+                )
+
+            ax.axvline(thr, linestyle="--", label=f"threshold = {thr:.4f}" if stacked else None)
+            ax.set_xlim(min_score, max_score)
+            ax.grid(True, alpha=0.25)
+
+        if not stacked:
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+
+            # Na wspólnym wykresie: po jednej gęstości dla każdego składnika
+            for title, w in components:
+                _plot_one(ax, title, s, w)
+
+            # osobno próg, żeby był w legendzie na wspólnym wykresie
+            ax.axvline(thr, linestyle="--", label=f"threshold = {thr:.4f}")
+
+            ax.set_xlabel("score")
+            ax.set_ylabel("density")
+            ax.set_title("Component densities over score")
+
+            # legenda w środku: prawa-góra (jak chciałeś dla gęstości)
+            ax.legend(
+                loc="upper right",
+                bbox_to_anchor=(0.98, 0.98),
+                bbox_transform=ax.transAxes,
+                frameon=True,
+                framealpha=1.0,
+                facecolor="white",
+                edgecolor="black",
+                fancybox=False
+            )
+
+            fig.tight_layout()
+            fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+
+        else:
+            fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+
+            for ax, (title, w) in zip(axes, components):
+                _plot_one(ax, title, s, w)
+                ax.set_title(title)
+                ax.set_ylabel("density")
+
+                # legenda w środku: prawa-góra
+                ax.legend(
+                    loc="upper right",
+                    bbox_to_anchor=(0.98, 0.98),
+                    bbox_transform=ax.transAxes,
+                    frameon=True,
+                    framealpha=1.0,
+                    facecolor="white",
+                    edgecolor="black",
+                    fancybox=False
+                )
+
+            axes[-1].set_xlabel("score")
+            fig.tight_layout()
+            fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
+            plt.close(fig)

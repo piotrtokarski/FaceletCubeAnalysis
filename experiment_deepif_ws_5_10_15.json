@@ -1,0 +1,225 @@
+{
+  "created_at": "2026-02-17T11:40:02",
+  "experiment_type": "DeepIF_direct_fit",
+  "target_column": "redundant_state_marker_binary",
+  "window_sizes": [
+    5,
+    10
+  ],
+  "stride": 1,
+  "seed": 42,
+  "schema": "RandomTrainTestSplit(repetition=10, test_size=0.1, shuffle=True)",
+  "params": {
+    "task": "binary",
+    "threshold_technique": "max_f1",
+    "move_mode": "18",
+    "one_hot_moves": false,
+    "use_states": false
+  },
+  "metrics": [
+    "accuracy",
+    "f1",
+    "precision",
+    "recall",
+    "balanced_accuracy",
+    "mcc",
+    "pr_auc",
+    "roc_auc"
+  ],
+  "results": {
+    "window_size_5": {
+      "IsolationForest": {
+        "fold_metrics": [
+          {
+            "fold": 1,
+            "task": "binary",
+            "threshold": 0.3583311438560486,
+            "accuracy": 0.08074697527617043,
+            "f1": 0.1494280846921392,
+            "precision": 0.08074697527617043,
+            "recall": 1.0,
+            "balanced_accuracy": 0.5,
+            "mcc": 0.0,
+            "pr_auc": 0.07691268643576017,
+            "roc_auc": 0.48374463286314096
+          }
+        ],
+        "summary": {
+          "task": "binary",
+          "n_folds": 1,
+          "metrics": {
+            "accuracy": {
+              "count": 1,
+              "mean": 0.08074697527617043,
+              "std": 0.0,
+              "min": 0.08074697527617043,
+              "max": 0.08074697527617043,
+              "median": 0.08074697527617043
+            },
+            "f1": {
+              "count": 1,
+              "mean": 0.1494280846921392,
+              "std": 0.0,
+              "min": 0.1494280846921392,
+              "max": 0.1494280846921392,
+              "median": 0.1494280846921392
+            },
+            "precision": {
+              "count": 1,
+              "mean": 0.08074697527617043,
+              "std": 0.0,
+              "min": 0.08074697527617043,
+              "max": 0.08074697527617043,
+              "median": 0.08074697527617043
+            },
+            "recall": {
+              "count": 1,
+              "mean": 1.0,
+              "std": 0.0,
+              "min": 1.0,
+              "max": 1.0,
+              "median": 1.0
+            },
+            "balanced_accuracy": {
+              "count": 1,
+              "mean": 0.5,
+              "std": 0.0,
+              "min": 0.5,
+              "max": 0.5,
+              "median": 0.5
+            },
+            "mcc": {
+              "count": 1,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "median": 0.0
+            },
+            "pr_auc": {
+              "count": 1,
+              "mean": 0.07691268643576017,
+              "std": 0.0,
+              "min": 0.07691268643576017,
+              "max": 0.07691268643576017,
+              "median": 0.07691268643576017
+            },
+            "roc_auc": {
+              "count": 1,
+              "mean": 0.48374463286314096,
+              "std": 0.0,
+              "min": 0.48374463286314096,
+              "max": 0.48374463286314096,
+              "median": 0.48374463286314096
+            }
+          },
+          "threshold": {
+            "count": 1,
+            "mean": 0.3583311438560486,
+            "std": 0.0,
+            "min": 0.3583311438560486,
+            "max": 0.3583311438560486,
+            "median": 0.3583311438560486
+          }
+        }
+      }
+    },
+    "window_size_10": {
+      "IsolationForest": {
+        "fold_metrics": [
+          {
+            "fold": 1,
+            "task": "binary",
+            "threshold": 0.34749937057495117,
+            "accuracy": 0.08081427774679309,
+            "f1": 0.14954332008875587,
+            "precision": 0.08081427774679309,
+            "recall": 1.0,
+            "balanced_accuracy": 0.5,
+            "mcc": 0.0,
+            "pr_auc": 0.07926777482563674,
+            "roc_auc": 0.49030131482520667
+          }
+        ],
+        "summary": {
+          "task": "binary",
+          "n_folds": 1,
+          "metrics": {
+            "accuracy": {
+              "count": 1,
+              "mean": 0.08081427774679309,
+              "std": 0.0,
+              "min": 0.08081427774679309,
+              "max": 0.08081427774679309,
+              "median": 0.08081427774679309
+            },
+            "f1": {
+              "count": 1,
+              "mean": 0.14954332008875587,
+              "std": 0.0,
+              "min": 0.14954332008875587,
+              "max": 0.14954332008875587,
+              "median": 0.14954332008875587
+            },
+            "precision": {
+              "count": 1,
+              "mean": 0.08081427774679309,
+              "std": 0.0,
+              "min": 0.08081427774679309,
+              "max": 0.08081427774679309,
+              "median": 0.08081427774679309
+            },
+            "recall": {
+              "count": 1,
+              "mean": 1.0,
+              "std": 0.0,
+              "min": 1.0,
+              "max": 1.0,
+              "median": 1.0
+            },
+            "balanced_accuracy": {
+              "count": 1,
+              "mean": 0.5,
+              "std": 0.0,
+              "min": 0.5,
+              "max": 0.5,
+              "median": 0.5
+            },
+            "mcc": {
+              "count": 1,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "median": 0.0
+            },
+            "pr_auc": {
+              "count": 1,
+              "mean": 0.07926777482563674,
+              "std": 0.0,
+              "min": 0.07926777482563674,
+              "max": 0.07926777482563674,
+              "median": 0.07926777482563674
+            },
+            "roc_auc": {
+              "count": 1,
+              "mean": 0.49030131482520667,
+              "std": 0.0,
+              "min": 0.49030131482520667,
+              "max": 0.49030131482520667,
+              "median": 0.49030131482520667
+            }
+          },
+          "threshold": {
+            "count": 1,
+            "mean": 0.34749937057495117,
+            "std": 0.0,
+            "min": 0.34749937057495117,
+            "max": 0.34749937057495117,
+            "median": 0.34749937057495117
+          }
+        }
+      }
+    }
+  }
+}
