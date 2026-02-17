@@ -110,7 +110,7 @@ class Experiment:
         ranker_params: Optional[Dict[str, Any]] = None,
         model_factory: Optional[Callable[[], Any]] = None,
         binary_eval_metrics: tuple[str, ...] = ("accuracy", "f1"),
-    ) -> List[Dict[str, float]]:
+    ):
         label_cols = ["redundant_state_marker", "redundant_state_marker_binary", "redundant_state_marker_first", "redundant_state_marker_binary_first"]
         meta_cols = ["solve_id", "start", "end"]
 
@@ -186,30 +186,66 @@ class Experiment:
             else:
                 raise ValueError(f"Unsupported task='{task}'. Use 'binary' or 'regression'.")
 
+        # # ===== summary =====
+        # print("\n=== Summary ===")
+        # if not fold_metrics:
+        #     print("Brak metryk (wszystkie foldy pominięte).")
+        #     return fold_metrics
+        #
+        # if task == "binary":
+        #     metric_names = [m for m in binary_eval_metrics if m in fold_metrics[0]]
+        #     for name in metric_names:
+        #         vals = np.array([fm[name] for fm in fold_metrics], dtype=np.float64)
+        #         vals = vals[np.isfinite(vals)]
+        #         if vals.size == 0:
+        #             print(f"{name:<16}: mean=nan, std=nan")
+        #         else:
+        #             print(f"{name:<16}: mean={vals.mean():.4f}, std={vals.std(ddof=0):.4f}")
+        # else:
+        #     maes = [m["mae"] for m in fold_metrics]
+        #     rmses = [m["rmse"] for m in fold_metrics]
+        #     r2s = [m["r2"] for m in fold_metrics]
+        #     print(f"MAE : mean={np.mean(maes):.4f}, std={np.std(maes, ddof=0):.4f}")
+        #     print(f"RMSE: mean={np.mean(rmses):.4f}, std={np.std(rmses, ddof=0):.4f}")
+        #     print(f"R2  : mean={np.mean(r2s):.4f}, std={np.std(r2s, ddof=0):.4f}")
+        #
+        # return fold_metrics
         # ===== summary =====
+        summary = Experiment._build_summary(
+            fold_metrics=fold_metrics,
+            task=task,
+            binary_eval_metrics=binary_eval_metrics
+        )
+
         print("\n=== Summary ===")
-        if not fold_metrics:
+        if summary["n_folds"] == 0:
             print("Brak metryk (wszystkie foldy pominięte).")
-            return fold_metrics
+            return {"fold_metrics": fold_metrics, "summary": summary}
 
         if task == "binary":
-            metric_names = [m for m in binary_eval_metrics if m in fold_metrics[0]]
-            for name in metric_names:
-                vals = np.array([fm[name] for fm in fold_metrics], dtype=np.float64)
-                vals = vals[np.isfinite(vals)]
-                if vals.size == 0:
-                    print(f"{name:<16}: mean=nan, std=nan")
-                else:
-                    print(f"{name:<16}: mean={vals.mean():.4f}, std={vals.std(ddof=0):.4f}")
-        else:
-            maes = [m["mae"] for m in fold_metrics]
-            rmses = [m["rmse"] for m in fold_metrics]
-            r2s = [m["r2"] for m in fold_metrics]
-            print(f"MAE : mean={np.mean(maes):.4f}, std={np.std(maes, ddof=0):.4f}")
-            print(f"RMSE: mean={np.mean(rmses):.4f}, std={np.std(rmses, ddof=0):.4f}")
-            print(f"R2  : mean={np.mean(r2s):.4f}, std={np.std(r2s, ddof=0):.4f}")
+            if "threshold" in summary:
+                sthr = summary["threshold"]
+                print(
+                    f"{'threshold':<16}: mean={sthr['mean']:.4f}, std={sthr['std']:.4f}, "
+                    f"min={sthr['min']:.4f}, max={sthr['max']:.4f}"
+                )
 
-        return fold_metrics
+            for name, s in summary["metrics"].items():
+                print(
+                    f"{name:<16}: mean={s['mean']:.4f}, std={s['std']:.4f}, "
+                    f"min={s['min']:.4f}, max={s['max']:.4f}"
+                )
+        else:
+            for name, s in summary["metrics"].items():
+                print(
+                    f"{name.upper():<16}: mean={s['mean']:.4f}, std={s['std']:.4f}, "
+                    f"min={s['min']:.4f}, max={s['max']:.4f}"
+                )
+
+        return {
+            "fold_metrics": fold_metrics,
+            "summary": summary
+        }
 
     @staticmethod
     def _compute_binary_metrics(y_true, y_score, threshold, metrics):
@@ -244,7 +280,7 @@ class Experiment:
         return out
 
     @staticmethod
-    def run(cfg: ExperimentConfig) -> List[Dict[str, float]]:
+    def run(cfg: ExperimentConfig):
         if cfg.calculate_redundant_states:
             df = DataLoader.load_data(cfg.dataset_path)
             df_transformer = DataTransformer.prepare(df, verbose=True)
@@ -264,3 +300,63 @@ class Experiment:
             ranker_params=cfg.ranker_params,
             binary_eval_metrics=cfg.binary_eval_metrics,
         )
+
+    @staticmethod
+    def _stats_from_values(values: np.ndarray) -> Dict[str, float]:
+        values = np.asarray(values, dtype=np.float64)
+        finite = values[np.isfinite(values)]
+
+        if finite.size == 0:
+            return {
+                "count": 0,
+                "mean": float("nan"),
+                "std": float("nan"),
+                "min": float("nan"),
+                "max": float("nan"),
+                "median": float("nan"),
+            }
+
+        return {
+            "count": int(finite.size),
+            "mean": float(np.mean(finite)),
+            "std": float(np.std(finite, ddof=0)),
+            "min": float(np.min(finite)),
+            "max": float(np.max(finite)),
+            "median": float(np.median(finite)),
+        }
+
+    @staticmethod
+    def _build_summary(
+        fold_metrics: List[Dict[str, float]],
+        task: str,
+        binary_eval_metrics: tuple[str, ...]
+    ) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {
+            "task": task,
+            "n_folds": int(len(fold_metrics)),
+            "metrics": {}
+        }
+
+        if len(fold_metrics) == 0:
+            return summary
+
+        if task == "binary":
+            # agregacja progu
+            thr_vals = np.array([fm.get("threshold", np.nan) for fm in fold_metrics], dtype=np.float64)
+            summary["threshold"] = Experiment._stats_from_values(thr_vals)
+
+            # agregacja metryk binarnych
+            metric_names = [m for m in binary_eval_metrics if any(m in fm for fm in fold_metrics)]
+            for name in metric_names:
+                vals = np.array([fm.get(name, np.nan) for fm in fold_metrics], dtype=np.float64)
+                summary["metrics"][name] = Experiment._stats_from_values(vals)
+
+        elif task == "regression":
+            for name in ("mae", "rmse", "r2"):
+                vals = np.array([fm.get(name, np.nan) for fm in fold_metrics], dtype=np.float64)
+                summary["metrics"][name] = Experiment._stats_from_values(vals)
+
+        else:
+            raise ValueError(f"Unsupported task='{task}'. Use 'binary' or 'regression'.")
+
+        return summary

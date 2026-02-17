@@ -109,8 +109,8 @@ class CubeMovementRanker:
         loss_fn = self._make_loss(y_train=y_tr)
 
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        # opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        # opt = torch.optim.SGD(self.model.parameters(), lr=self.lr)
+        # opt = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        # opt = torch.optim.SGD(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         # inicjalizacja best
         if self._metric_direction(self.stop_metric) == "max":
