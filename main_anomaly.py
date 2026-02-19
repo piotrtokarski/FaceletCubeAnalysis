@@ -6,9 +6,11 @@ import numpy as np
 
 from algorithms.CubeCNN1D import CubeCNN1D
 from algorithms.CubeCNN2D2 import CubeCNN2D
+from algorithms.EmpiricalCumulativeDistributionFunctions import EmpiricalCumulativeDistributionFunctions
 from algorithms.IF import IsolationForest
 from algorithms.ODIF import DeepIF
 from algorithms.RecurrentNet import RecurrentNet
+from algorithms.ScoreGuidedAutoencoder import ScoreGuidedAutoencoder
 from algorithms.SequenceRNNNet import SequenceRNNNet
 from algorithms.SimpleMLPNet import SimpleMLPNet
 from algorithms.SimpleTransformerNet2 import SimpleTransformerNet2
@@ -52,8 +54,10 @@ COMMON_METRICS = (
 )
 
 MODEL_FACTORIES = [
-    ("IsolationForest", lambda: IsolationForest()),
-    # ("OptimizedDeepIF", lambda: DeepIF())
+    # ("IsolationForest", lambda: IsolationForest()),
+    # ("OptimizedDeepIF", lambda: DeepIF()),
+    # ("ECOD", lambda: EmpiricalCumulativeDistributionFunctions()),
+    ("SGAE", lambda: ScoreGuidedAutoencoder()),
 ]
 
 WINDOW_SIZES = (5, 10, 15)

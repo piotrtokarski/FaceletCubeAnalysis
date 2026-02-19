@@ -43,12 +43,12 @@ COMMON_METRICS = (
 )
 
 MODEL_FACTORIES = [
-    ("SimpleMLPNet", lambda: SimpleMLPNet()),
+    # ("SimpleMLPNet", lambda: SimpleMLPNet()),
     # ("CubeCNN1D", lambda: CubeCNN1D()),
     # ("CubeCNN2D", lambda: CubeCNN2D()),
     # ("SimpleTransformerNet2", lambda: SimpleTransformerNet2()),
     # ("RecurrentNet", lambda: RecurrentNet()),
-    # ("SequenceRNNNet", lambda: SequenceRNNNet())
+    ("SequenceRNNNet", lambda: SequenceRNNNet())
 ]
 
 WINDOW_SIZES = (5, 10, 15)

@@ -818,3 +818,126 @@ class CubeMovementRanker:
             fig.tight_layout()
             fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
             plt.close(fig)
+
+    def plot_classwise_certainty_uncertainty_over_score(
+            self,
+            output_file_name,
+            scores,
+            labels,
+            bins=50,
+            kde=True,
+    ):
+        """
+        Dwa wykresy (stacked):
+          - label==0: density(score) ważone przez certainty_good oraz uncertainty
+          - label==1: density(score) ważone przez certainty_bad  oraz uncertainty
+        """
+
+        thr = float(self.train_properties["threshold"])
+        max_score = float(self.train_properties["max_score"])
+        min_score = float(self.train_properties["min_score"])
+
+        if max_score < min_score:
+            min_score, max_score = max_score, min_score
+        thr = float(np.clip(thr, min_score, max_score))
+
+        s = np.asarray(scores, dtype=np.float64).reshape(-1)
+        y = np.asarray(labels).reshape(-1)
+
+        if s.shape[0] != y.shape[0]:
+            raise ValueError(f"scores i labels muszą mieć tę samą długość, mamy {s.shape[0]} vs {y.shape[0]}")
+
+        mask = np.isfinite(s) & np.isfinite(y.astype(np.float64))
+        s = s[mask]
+        y = y[mask].astype(int)
+
+        if s.size == 0:
+            raise ValueError("scores jest puste po odfiltrowaniu NaN/Inf.")
+
+        # spinamy do zakresu modelowania
+        s = np.clip(s, min_score, max_score)
+
+        c_bad, c_good, unc = self._compute_certainty_uncertainty(s)
+
+        # maski klas
+        m0 = (y == 0)
+        m1 = (y == 1)
+
+        def _weighted_density(ax, x, w, label_prefix):
+            x = np.asarray(x, dtype=np.float64)
+            w = np.asarray(w, dtype=np.float64)
+            m = np.isfinite(x) & np.isfinite(w)
+            x = x[m]
+            w = np.clip(w[m], 0.0, None)
+
+            if x.size == 0 or np.sum(w) <= 1e-12:
+                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+                return
+
+            # histogram ważony (density po score)
+            ax.hist(
+                x,
+                bins=bins,
+                range=(min_score, max_score),
+                weights=w,
+                density=True,
+                alpha=0.35,
+                label=f"hist: {label_prefix}",
+            )
+
+            # KDE ważone
+            if kde and x.size > 1 and np.std(x) > 1e-12:
+                try:
+                    from scipy.stats import gaussian_kde
+                    xs = np.linspace(min_score, max_score, 400)
+                    kde_fun = gaussian_kde(x, weights=w)
+                    ax.plot(xs, kde_fun(xs), label=f"kde: {label_prefix}")
+                except Exception:
+                    pass
+
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+
+        # --- klasa 0: pewność (good) + niepewność ---
+        ax0 = axes[0]
+        _weighted_density(ax0, s[m0], c_good[m0], "certainty_good (normal)")
+        _weighted_density(ax0, s[m0], unc[m0], "uncertainty (normal)")
+        ax0.axvline(thr, linestyle="--", label=f"threshold = {thr:.4f}")
+        ax0.set_ylabel("density")
+        ax0.grid(True, alpha=0.25)
+        ax0.legend(
+            loc="upper right",
+            bbox_to_anchor=(0.98, 0.98),
+            bbox_transform=ax0.transAxes,
+            frameon=True,
+            framealpha=1.0,
+            facecolor="white",
+            edgecolor="black",
+            fancybox=False
+        )
+
+        # --- klasa 1: pewność (bad) + niepewność ---
+        ax1 = axes[1]
+        _weighted_density(ax1, s[m1], c_bad[m1], "certainty_bad (anomaly)")
+        _weighted_density(ax1, s[m1], unc[m1], "uncertainty (anomaly)")
+        ax1.axvline(thr, linestyle="--", label=f"threshold = {thr:.4f}")
+        ax1.set_xlabel("score")
+        ax1.set_ylabel("density")
+        ax1.grid(True, alpha=0.25)
+        ax1.legend(
+            loc="upper left",
+            bbox_to_anchor=(0.02, 0.98),
+            bbox_transform=ax1.transAxes,
+            frameon=True,
+            framealpha=1.0,
+            facecolor="white",
+            edgecolor="black",
+            fancybox=False
+        )
+
+        axes[-1].set_xlim(min_score, max_score)
+
+        fig.tight_layout()
+        fig.savefig(output_file_name, dpi=300, bbox_inches="tight")
+        plt.close(fig)

@@ -166,6 +166,13 @@ class UncertaintyExperiment:
                 kde=True,
                 stacked=True
             )
+            ranker.plot_classwise_certainty_uncertainty_over_score(
+                output_file_name=f"res/ws_{window_size}_fold_{i}_density_score_separated.png",
+                scores=y_score_test,
+                labels=y_test,
+                bins=50,
+                kde=True
+            )
 
 
     @staticmethod
